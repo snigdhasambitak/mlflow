@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow-tracking-server
+  labels:
+    app: mlflow-tracking-server
+    team: ${TEAM}
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow-tracking-server
+  template:
+    metadata:
+      labels:
+        app: mlflow-tracking-server
+    spec:
+      nodeSelector:
+        role: ml-core
+      tolerations:
+      - key: "role"
+        operator: "Equal"
+        value: "ml-core"
+        effect: "NoSchedule"
+      serviceAccount: mlflow-tracking-server
+      # [START volumes]
+      volumes:
+      - name: ssl-certs
+        hostPath:
+          path: /etc/ssl/certs
+      - name: cloudsql
+        emptyDir: {}
+      # [END volumes]
+      initContainers:
+      - image: gcr.io/google.com/cloudsdktool/cloud-sdk:326.0.0-alpine
+        name: mlops-cloudsql-proxy-workload-identity
+        command:
+        - '/bin/bash'
+        - '-c'
+        - |
+          curl -s -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token' --retry 30 --retry-connrefused --retry-max-time 30 > /dev/null || exit 1
+      containers:
+      - name: cloudsql-proxy
+        image: eu.gcr.io/cloudsql-docker/gce-proxy:1.29.0-alpine
+        command: ["/cloud_sql_proxy", "--dir=/cloudsql", "-instances=${GCLOUD_PROJECT_NAME_SQL}:${GCLOUD_ZONE_SQL}:${GCLOUD_SQL_INSTANCE}=tcp:5432"]
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/ssl/certs
+        - name: cloudsql
+          mountPath: /cloudsql
+        securityContext:
+          runAsNonRoot: true
+        resources:
+          requests:
+            cpu: ${SQL_PROXY_CPU}
+            memory: ${SQL_PROXY_MEM}
+      - name: mlflow-tracking-server-base
+        image: europe-docker.pkg.dev/travix-com/eu-docker-travix/mlflow-tracking-server:${GO_PIPELINE_LABEL}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+        env:
+        - name: MLFLOW_BACKEND_STORE_URI
+          value: postgresql+psycopg2://${MLOPS_APP_SQL_USER}:${MLOPS_APP_SQL_PASSWORD}@127.0.0.1:5432/${MLOPS_APP_SQL_DB}
+        - name: MLFLOW_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: mlflow-configmap
+              key: HOST
+        - name: MLFLOW_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: mlflow-configmap
+              key: PORT
+        - name: MLFLOW_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: mlflow-configmap
+              key: WORKERS
+        resources:
+          requests:
+            cpu: ${MLFLOW_CPU}
+            memory: ${MLFLOW_MEM}
+        securityContext: {}
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30

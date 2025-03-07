@@ -1,0 +1,29 @@
+version: '3.5'
+services:
+    mlflow-backend-store:
+        image: postgres:13
+        volumes:
+            - ~/.mlflow-postgres-data:/var/lib/postgresql/data
+        env_file: ./config/local/mlflow_postgres.env
+        ports:
+            # exposing the db port to check out stuff
+            - 15432:5432
+        networks:
+            - mlops
+    mlflow-tracking-server:
+        build:
+            context: ./mlflow-tracking-server
+        restart: always
+        depends_on:
+            - mlflow-backend-store
+        ports:
+            - 5000:5000
+        command: webserver
+        env_file:
+            - ./config/local/mlflow.env
+        networks:
+            - mlops
+
+networks:
+  mlops:
+    driver: bridge

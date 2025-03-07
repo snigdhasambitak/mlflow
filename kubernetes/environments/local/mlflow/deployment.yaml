@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow-tracking-server
+  labels:
+      app: mlflow-tracking-server
+      team: prism
+  namespace: mlops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow-tracking-server
+  template:
+    metadata:
+      labels:
+        app: mlflow-tracking-server
+    spec:
+      containers:
+      - name: cloudsql-proxy
+        image: eu.gcr.io/cloudsql-docker/gce-proxy:1.29.0-alpine
+        command: ["/cloud_sql_proxy", "--dir=/cloudsql", "-instances=${GCLOUD_PROJECT_NAME_SQL}:${GCLOUD_ZONE_SQL}:${GCLOUD_SQL_INSTANCE}=tcp:5432"]
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/ssl/certs
+        - name: cloudsql
+          mountPath: /cloudsql
+        securityContext:
+          runAsNonRoot: true
+        resources:
+          requests:
+            cpu: 500m
+            memory: 500Mi
+      - name: mlflow-tracking-server-base
+        image: mlflow-tracking-server:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+        env:
+        - name: MLFLOW_BACKEND_STORE_URI
+          value: postgresql+psycopg2://${MLFLOW_SQL_USER}:${MLFLOW_SQL_PASSWORD}@127.0.0.1:5432/${MLFLOW_SQL_DB}
+        - name: MLFLOW_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: mlflow-configmap
+              key: HOST
+        - name: MLFLOW_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: mlflow-configmap
+              key: PORT
+        - name: MLFLOW_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: mlflow-configmap
+              key: WORKERS
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 1000Mi
+        securityContext: {}
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
